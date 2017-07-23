@@ -26,6 +26,36 @@
     getWebMidi();
   }
 
+  function requestDump(synthNumber) {
+    console.log('fetching for ' + synthNumber);
+    output = false;
+
+    if ( midi && midi.outputs && outputID ) {
+      output = midi.outputs.get(outputID);
+      output.send( [0xF0, 0, 0x20, 0x29, 0x01, 0x60, 0x40, synthNumber, 0, 0xF7] );
+    }
+    
+  }
+
+  function activatePatchButtonFetch(button) {
+    var buttonData = getPatchButtonData(button);
+
+    if ( buttonData.patchSelected ) {
+      var cachedPatches = getCache(buttonData.patchType),
+        patch = cachedPatches[buttonData.patchSelected]
+          ? cachedPatches[buttonData.patchSelected] : {},
+        midiChannel = getPatchMidiChannel(buttonData.buttonComponent);
+
+      if ( patch ) {
+        requestDump(0);
+      } else {
+        alert('Ooops. Something ain\'t right');
+      }
+    } else {
+      alert('select a patch from the dropdown menu');
+    }
+  }
+
   // Begin Circuit Editor HTML code
   function buildMidiComponents(midiChannelsKeys) {
     var circuitWebMidiTestDiv = document.getElementById("circuit-web-midi-test");
@@ -63,6 +93,8 @@
         + key + "'>export</button>"
         + "<button type='submit' class='patch-import' data-component-section='"
         + key + "'>import</button>"
+        + "<button type='submit' class='patch-fetch' data-component-section='"
+        + key + "'>fetch</button>"
         + "</div>";
       outputHTML += getComponentValueString(value, thisMidiChannel);
       outputHTML += "</div>";
@@ -282,7 +314,8 @@
       save: document.getElementsByClassName("patch-save"),
       delete: document.getElementsByClassName("patch-delete"),
       export: document.getElementsByClassName("patch-export"),
-      import: document.getElementsByClassName("patch-import")
+      import: document.getElementsByClassName("patch-import"),
+      fetch: document.getElementsByClassName("patch-fetch")
       },
       buttonTypes = Object.keys(buttons),
       buttonTypesCount = buttonTypes.length;
@@ -312,6 +345,9 @@
             break;
           case 'import':
             activatePatchButtonImport(this);
+            break;
+          case 'fetch':
+            activatePatchButtonFetch(this);
             break;
         }
       });
@@ -787,7 +823,7 @@
   // Begin Web Midi Code
   function getWebMidi() {
     if ( navigator.requestMIDIAccess ) {
-      navigator.requestMIDIAccess().then( onMIDISuccess, onMIDIFailure );
+      navigator.requestMIDIAccess({ sysex: true }).then( onMIDISuccess, onMIDIFailure );
     } else {
       onMIDIFailure('Your browser does not support web midi. This feature is currently only supported in Google Chrome.');
     }
@@ -836,12 +872,49 @@
     messageHolder.innerHTML += '<p>' + message + '</p>';
   }
 
+  function dumpIndexToCC(index){
+    var i = 0;
+    for(var k in circuitMidiApp.midiCCs.synth){
+      var val = circuitMidiApp.midiCCs.synth[k];
+      //console.log("** iterating " + i + ", key:" + k + ", def:" + JSON.stringify(val));
+      if(i===index)
+        return {"cc":k, "def":val } ;
+      i++;
+    }
+    return null;
+  }
+  
   function onMIDIMessage(event) {
     if ( midiIn && midiIn.enabled ) {
+      
       var str = "",
         eventMidiChannel = event.data && event.data[0] ? (event.data[0] & 0x0F) : false;
         eventMidiCC = event.data && event.data[1] ? event.data[1] : false,
         eventMidiCCValue = event.data && event.data[2] ? event.data[2] : false;
+
+      if(event.data && event.data.length>4 && event.data[0] === 0xF0 && event.data[1] === 0x0 && event.data[2] === 0x20) {
+        /*
+        for (var i = 0x1; i < event.data.length; i+=1) {
+          // pos: 0x40 è il valore di osc 2 level
+          if(event.data[i]===48){
+            console.log("found env to freq? " + i.toString(16) + " (next val: " + event.data[i+1]);
+          }
+        }
+        */
+
+        for (var i = 0x29; i < event.data.length; i+=1) {
+          var comp =  dumpIndexToCC(i-0x29);
+          if(comp){
+            //console.log(JSON.stringify(comp));
+            var parName = comp.def.name;
+            var parCC = comp.cc;
+            var parVal = event.data[i];
+            console.log(parName + " = " + parVal);
+            updateSliderValue(0, parCC, parVal);
+            updateMidiPatch(0, parCC, parVal);
+          }
+        }
+      }
 
       if ( (eventMidiChannel === midiIn.channel) && eventMidiCC && eventMidiCCValue ) {
         var eventType = event.data[0] & 0xf0;
@@ -862,6 +935,7 @@
 
     markControlChange(midiChannel, midiCC, slider);
   }
+  
   function sendMiddleC( midi, portID ) {
     var noteOnMessage = [0x90, 60, 63];
     var output = midi.outputs.get(portID);
@@ -919,4 +993,14 @@
       }, delay);
     };
   }
+  
+  /*
+  navigator.requestMIDIAccess({ sysex: true }).then(
+    function(access){
+    printErrorMessage("Got SYSEX midi access");
+    }, function(e){
+    printErrorMessage("No SYSEX midi access");
+      
+    })
+    */
 })();
